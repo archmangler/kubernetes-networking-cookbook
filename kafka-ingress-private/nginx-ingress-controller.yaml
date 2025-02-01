@@ -89,10 +89,7 @@ rules:
     verbs: ["get", "list", "watch"]
   - apiGroups: ["networking.k8s.io"]
     resources: ["ingressclasses", "ingresses", "ingresses/status"]
-    verbs: ["get", "list", "watch"]
-  - apiGroups: ["networking.k8s.io"]
-    resources: ["ingresses"]
-    verbs: ["create", "update", "patch"]
+    verbs: ["get","list", "watch","create", "update", "patch"]
   - apiGroups: [""]
     resources: ["events"]
     verbs: ["create", "patch"]
@@ -112,9 +109,4 @@ subjects:
   - kind: ServiceAccount
     name: kafka-ingress-controller
     namespace: kafka-ingress
-
----
-
-
-
 
