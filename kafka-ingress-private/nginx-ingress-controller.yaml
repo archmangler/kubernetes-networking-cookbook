@@ -18,6 +18,7 @@ metadata:
   namespace: ingress-nginx
 spec:
   replicas: 1
+  serviceAccountName: kafka-ingress-controller
   selector:
     matchLabels:
       app.kubernetes.io/name: ingress-nginx
@@ -34,6 +35,15 @@ spec:
           args:
             - /nginx-ingress-controller
             - --tcp-services-configmap=ingress-nginx/tcp-services
+          env:
+            - name: POD_NAME
+              valueFrom:
+                fieldRef:
+                  fieldPath: metadata.name
+            - name: POD_NAMESPACE
+              valueFrom:
+                fieldRef:
+                  fieldPath: metadata.namespace
           ports:
             - name: http
               containerPort: 80
@@ -61,4 +71,50 @@ spec:
       targetPort: 9092
   selector:
     app.kubernetes.io/name: ingress-nginx
+
+---
+apiVersion: v1
+kind: ServiceAccount
+metadata:
+  name: kafka-ingress-controller
+  namespace: kafka-ingress
+---
+apiVersion: rbac.authorization.k8s.io/v1
+kind: ClusterRole
+metadata:
+  name: kafka-ingress-role
+rules:
+  - apiGroups: [""]
+    resources: ["configmaps", "endpoints", "nodes", "pods", "secrets", "services"]
+    verbs: ["get", "list", "watch"]
+  - apiGroups: ["networking.k8s.io"]
+    resources: ["ingressclasses", "ingresses", "ingresses/status"]
+    verbs: ["get", "list", "watch"]
+  - apiGroups: ["networking.k8s.io"]
+    resources: ["ingresses"]
+    verbs: ["create", "update", "patch"]
+  - apiGroups: [""]
+    resources: ["events"]
+    verbs: ["create", "patch"]
+  - apiGroups: ["batch"]
+    resources: ["jobs"]
+    verbs: ["get", "list", "watch", "create", "update", "patch", "delete"]
+---
+apiVersion: rbac.authorization.k8s.io/v1
+kind: ClusterRoleBinding
+metadata:
+  name: kafka-ingress-role-binding
+roleRef:
+  apiGroup: rbac.authorization.k8s.io
+  kind: ClusterRole
+  name: kafka-ingress-role
+subjects:
+  - kind: ServiceAccount
+    name: kafka-ingress-controller
+    namespace: kafka-ingress
+
+---
+
+
+
 
