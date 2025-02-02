@@ -380,13 +380,13 @@ spec:
               service:
                 name: kafka-ingress-controller
                 port:
-                  number: 9093  # TLS Kafka port
-.
-.
-.
-    Your non-tls configuration here.
-.
-.
+          - path: /
+            pathType: Prefix
+            backend:
+              service:
+                name: kafka-ingress-controller
+                port:
+                  number: 9092  # Non-TLS Kafka port                  number: 9093  # TLS Kafka port
 ```
 
 **Finally**:
