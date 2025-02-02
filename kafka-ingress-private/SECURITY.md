@@ -80,7 +80,8 @@ metadata:
   name: tcp-services
   namespace: kafka-ingress
 data:
-  "9092": "kafka/bayleaf-kafka-cp-kafka-headless:9092"
+  "9092": "kafka/bayleaf-kafka-cp-kafka-headless:9092" #Non-TLS Port
+  "9093": "kafka/bayleaf-kafka-cp-kafka-headless:9093" #TLS Port
 ```
 
 * Modify the Ingress Configuration:
@@ -204,7 +205,6 @@ kubectl apply -f kafka-statefulset.yaml
 * Kafka clients must also be configured to use TLS when connecting.
 * Create a client certificate:
 
-
 ```
 openssl genrsa -out kafka-client-key.pem 2048
 openssl req -new -key kafka-client-key.pem -out kafka-client.csr -subj "/CN=kafka-client"
@@ -214,17 +214,30 @@ openssl x509 -req -in kafka-client.csr -CA kafka-ca-cert.pem -CAkey kafka-ca-key
 * Copy these certificates to your Kafka client machine and configure the client properties:
 
 ```
+ssl.key.password=kafka-secret
+bootstrap.servers=your-kafka-broker:9093
 security.protocol=SSL
+
 ssl.truststore.location=/path/to/kafka-ca-cert.pem
 ssl.keystore.location=/path/to/kafka-client-cert.pem
 ssl.keystore.password=kafka-secret
-ssl.key.password=kafka-secret
+security.protocol=SSL
+ssl.truststore.location=/path/to/truststore.jks
+ssl.truststore.password=your-truststore-password
+```
+
+* Non-TLS Kafka clients should be configured accordingly:
+
+```
+bootstrap.servers=your-kafka-broker:9092
+security.protocol=PLAINTEXT
 ```
 
 * Run the Kafka client:
 
 ```
-kafka-console-producer --broker-list kafka.example.com:9092 --producer.config client.properties
+kafka-console-producer --broker-list kafka.example.com:9093 --producer.config client.properties.tls
+kafka-console-producer --broker-list kafka.example.com:9092 --producer.config client.properties.insecure
 ```
 
 
@@ -247,3 +260,138 @@ kafka-console-producer --broker-list kafka.example.com:9092 --producer.config cl
 * If the client connects, TLS is working.
 
 
+## Allowing Both TLS and Non-TLS connections on the ingress:
+
+
+* Obviously you must configure the kafka cluster to support both protocols as well. Assuming you've done so, the ingress controller must be modified along these lines:
+
+```
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: kafka-ingress-controller
+  namespace: kafka-ingress
+spec:
+  replicas: 1
+  selector:
+    matchLabels:
+      app.kubernetes.io/name: kafka-ingress
+  template:
+    metadata:
+      labels:
+        app.kubernetes.io/name: kafka-ingress
+      annotations:
+        prometheus.io/scrape: "true"
+    spec:
+      serviceAccountName: kafka-ingress-controller
+      containers:
+        - name: kafka-ingress-controller
+          image: registry.k8s.io/ingress-nginx/controller:v1.12.0
+          args:
+            - /nginx-ingress-controller
+            - --tcp-services-configmap=kafka-ingress/tcp-services
+            - --enable-ssl-passthrough  # Enables TLS passthrough for Kafka
+          ports:
+            - name: http
+              containerPort: 80
+            - name: https
+              containerPort: 443
+            - name: kafka-plaintext
+              containerPort: 9092
+            - name: kafka-tls
+              containerPort: 9093
+          env:
+            - name: POD_NAME
+              valueFrom:
+                fieldRef:
+                  fieldPath: metadata.name
+            - name: POD_NAMESPACE
+              valueFrom:
+                fieldRef:
+                  fieldPath: metadata.namespace
+```
+
+* The ingress Service configuration must also be modified:
+
+```
+apiVersion: v1
+kind: Service
+metadata:
+  name: kafka-ingress-controller
+  namespace: kafka-ingress
+spec:
+  type: LoadBalancer
+  ports:
+    - name: http
+      port: 80
+      targetPort: 80
+    - name: https
+      port: 443
+      targetPort: 443
+    - name: kafka-plaintext
+      port: 9092
+      targetPort: 9092
+    - name: kafka-tls
+      port: 9093
+      targetPort: 9093
+  selector:
+    app.kubernetes.io/name: kafka-ingress
+```
+
+
+* The  ConfigMap needs to be modified as well to allow both ports:
+
+```
+apiVersion: v1
+kind: ConfigMap
+metadata:
+  name: tcp-services
+  namespace: kafka-ingress
+data:
+  "9092": "kafka/kafka-service:9092"  # Non-TLS Kafka traffic
+  "9093": "kafka/kafka-service:9093"  # TLS Kafka traffic
+```
+
+
+* Finally, the Ingress Object Configuration must be modified:
+
+* This Ingress definition routes Kafka traffic to the appropriate ports, with TLS passthrough enabled.
+
+```
+apiVersion: networking.k8s.io/v1
+kind: Ingress
+metadata:
+  name: kafka-ingress
+  namespace: kafka-ingress
+  annotations:
+    nginx.ingress.kubernetes.io/backend-protocol: "TLS"
+spec:
+  tls:
+    - hosts:
+        - kafka.example.com  # Replace with your Kafka domain
+      secretName: kafka-tls-secret
+  rules:
+    - host: kafka.example.com
+      http:
+        paths:
+          - path: /
+            pathType: Prefix
+            backend:
+              service:
+                name: kafka-ingress-controller
+                port:
+                  number: 9093  # TLS Kafka port
+.
+.
+.
+    Your non-tls configuration here.
+.
+.
+```
+
+**Finally**:
+
+* Kafka can now accept both TLS (9093) and non-TLS (9092) connections.
+* NGINX Ingress is configured to handle both connection types and forward them correctly.
+* Ingress resource ensures secure TLS passthrough for Kafka clients that require encryption.
+* TLS certificates must be managed correctly for secure client communication.
